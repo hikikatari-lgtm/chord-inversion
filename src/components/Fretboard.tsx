@@ -121,26 +121,50 @@ export default function Fretboard({ forms, quality, rootNote, display }: Props) 
             {f}
           </text>
         ))}
-        {/* インバージョンごとに連結ポリゴンを描画（グリップの輪郭を視認しやすく） */}
+        {/* グリップごとに envelope を描く：ドットを囲む形を転回色で薄く塗る。
+            重なるグリップでも所属が分かるように、転回色をそのまま使う。 */}
         {forms.map((f, fi) => {
-          const pts = f.strings
-            .map((s, i) => {
-              const fret = f.frets[i];
-              const cx =
-                fret === 0 ? padX - 16 : padX + fretWidth * (fret - 0.5);
-              const cy = padY + stringSpacing * stringRow[s];
-              return `${cx},${cy}`;
-            })
-            .join(" ");
+          // 各ドットの座標
+          const points = f.strings.map((s, i) => {
+            const fret = f.frets[i];
+            const x = fret === 0 ? padX - 16 : padX + fretWidth * (fret - 0.5);
+            const y = padY + stringSpacing * stringRow[s];
+            return [x, y] as [number, number];
+          });
+          // 重心
+          const cxC =
+            points.reduce((acc, [x]) => acc + x, 0) / points.length;
+          const cyC =
+            points.reduce((acc, [, y]) => acc + y, 0) / points.length;
+          // ドット外側に膨らませた envelope の頂点
+          const PAD = 18;
+          const expanded = points.map(([x, y]) => {
+            const dx = x - cxC;
+            const dy = y - cyC;
+            const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+            return [x + (dx / dist) * PAD, y + (dy / dist) * PAD] as [
+              number,
+              number,
+            ];
+          });
+          // 重心まわりに角度ソート（自己交差を避ける）
+          const sorted = expanded.slice().sort((a, b) => {
+            const angleA = Math.atan2(a[1] - cyC, a[0] - cxC);
+            const angleB = Math.atan2(b[1] - cyC, b[0] - cxC);
+            return angleA - angleB;
+          });
+          const pts = sorted.map(([x, y]) => `${x},${y}`).join(" ");
+          const hue = INVERSION_HUES[f.inversion % INVERSION_HUES.length];
           return (
             <polygon
-              key={`poly-${fi}`}
+              key={`env-${fi}`}
               points={pts}
-              fill="#ffffff"
-              fillOpacity={0.04}
-              stroke="#ffffff"
-              strokeOpacity={0.1}
-              strokeWidth={1}
+              fill={`hsl(${hue} 70% 55%)`}
+              fillOpacity={0.1}
+              stroke={`hsl(${hue} 70% 55%)`}
+              strokeOpacity={0.55}
+              strokeWidth={1.5}
+              strokeLinejoin="round"
             />
           );
         })}
