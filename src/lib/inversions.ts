@@ -14,7 +14,6 @@ import {
 
 export type Pattern = "triad" | "drop2";
 
-// 4音コードか3音コードかを判定（drop2 で扱うのは7thコード4種）
 export function patternOf(quality: ChordQuality): Pattern {
   const tones = QUALITY_TONES[quality];
   return tones.length === 4 ? "drop2" : "triad";
@@ -25,10 +24,8 @@ export function inversionTones(quality: ChordQuality, inversion: number): number
   const tones = QUALITY_TONES[quality];
   const k = ((inversion % tones.length) + tones.length) % tones.length;
   if (patternOf(quality) === "triad") {
-    // 単純なローテーション
     return tones.map((_, i) => tones[(i + k) % tones.length]);
   }
-  // drop2
   return [
     tones[(k + 2) % 4],
     tones[(k + 0) % 4],
@@ -37,7 +34,6 @@ export function inversionTones(quality: ChordQuality, inversion: number): number
   ];
 }
 
-// 弦グループの定義（低音弦→高音弦の順で弦番号を並べる）
 export interface StringGroup {
   id: string;
   label: string;
@@ -58,68 +54,65 @@ export const DROP2_GROUPS: StringGroup[] = [
 ];
 
 export interface InversionForm {
-  inversion: number; // 0,1,2 (or 0..3 for drop2)
-  frets: number[]; // 低音弦→高音弦
-  strings: number[]; // 低音弦→高音弦の弦番号
+  inversion: number;
+  frets: number[];
+  strings: number[];
   tones: number[]; // 各音の root からの半音
 }
 
-// あるコード（quality + rootNote）と弦グループで、すべてのインバージョンの
-// フレット位置を計算する。各インバージョンはネック上での「最も自然な低位置」に配置。
-// （ベース音は最低 0 フレット以上、各音が上昇するピッチで並ぶ）
+// あるコード（quality + rootNote）と弦グループで、すべての転回について
+// 「指で押さえられる範囲(maxSpan以下)に収まるフォーム」を列挙する。
+//
+// 各転回ごとに、ベース音の最低出現位置から +12 フレット刻みでオクターブ違いを試し、
+// 各音のピッチが昇順になるように高弦のフレットを +12 シフトする。
+// 結果として max-min が maxSpan を超えるフォームはスキップ。
 export function computeInversions(
   quality: ChordQuality,
   rootNote: string,
   group: StringGroup,
+  options: { maxFret?: number; maxSpan?: number } = {},
 ): InversionForm[] {
-  const numInversions = QUALITY_TONES[quality].length; // 3 or 4
+  const { maxFret = 15, maxSpan = 5 } = options;
+  const numInversions = QUALITY_TONES[quality].length;
   const rootIdx = noteIndex(rootNote);
   const forms: InversionForm[] = [];
 
   for (let k = 0; k < numInversions; k++) {
     const tones = inversionTones(quality, k);
-    const frets: number[] = [];
-    let prevPitch = -Infinity;
-    for (let i = 0; i < group.strings.length; i++) {
-      const stringNum = group.strings[i];
-      const openPitch = STRING_OPEN_PITCH[stringNum];
-      const openClass = openPitch % 12;
-      const targetClass = (tones[i] + rootIdx) % 12;
-      let fret = (((targetClass - openClass) % 12) + 12) % 12;
-      let pitch = openPitch + fret;
-      // 上昇するピッチを保つためフレットを 12 ずつ上げる
-      while (pitch <= prevPitch) {
-        fret += 12;
-        pitch += 12;
+    const targets = tones.map((t) => (t + rootIdx) % 12);
+    const bassString = group.strings[0];
+    const bassOpen = STRING_OPEN_PITCH[bassString];
+    const bassClass = bassOpen % 12;
+    const bassLowest = (((targets[0] - bassClass) % 12) + 12) % 12;
+
+    // ベース音の各オクターブ位置を試す
+    for (let bassFret = bassLowest; bassFret <= maxFret; bassFret += 12) {
+      const frets: number[] = [bassFret];
+      let prevPitch = bassOpen + bassFret;
+      let valid = true;
+      for (let i = 1; i < group.strings.length; i++) {
+        const s = group.strings[i];
+        const open = STRING_OPEN_PITCH[s];
+        const openClass = open % 12;
+        let fret = (((targets[i] - openClass) % 12) + 12) % 12;
+        let pitch = open + fret;
+        while (pitch <= prevPitch) {
+          fret += 12;
+          pitch += 12;
+        }
+        if (fret > maxFret) {
+          valid = false;
+          break;
+        }
+        frets.push(fret);
+        prevPitch = pitch;
       }
-      frets.push(fret);
-      prevPitch = pitch;
+      if (!valid) continue;
+      const span = Math.max(...frets) - Math.min(...frets);
+      if (span > maxSpan) continue;
+      forms.push({ inversion: k, frets, strings: group.strings, tones });
     }
-    forms.push({ inversion: k, frets, strings: group.strings, tones });
   }
 
   return forms;
-}
-
-// フレットボードに表示する用に、可視範囲(0..maxFret)内のフォームを集める。
-// 同じインバージョンでもオクターブ違い（+12/−12）でフィットすれば追加する。
-export function visibleForms(
-  forms: InversionForm[],
-  maxFret = 15,
-): InversionForm[] {
-  const out: InversionForm[] = [];
-  for (const f of forms) {
-    // 元のフォームから -12 オクターブまで降りていき、最低でフィットする位置を探す
-    let baseFrets = [...f.frets];
-    while (Math.min(...baseFrets) - 12 >= 0) {
-      baseFrets = baseFrets.map((x) => x - 12);
-    }
-    // baseFrets から +12 オクターブずつ可視範囲に収まる限り追加
-    let frets = baseFrets;
-    while (Math.max(...frets) <= maxFret) {
-      out.push({ ...f, frets: [...frets] });
-      frets = frets.map((x) => x + 12);
-    }
-  }
-  return out;
 }

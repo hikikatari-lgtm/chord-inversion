@@ -15,7 +15,6 @@ import {
   TRIAD_GROUPS,
   DROP2_GROUPS,
   computeInversions,
-  visibleForms,
 } from "@/lib/inversions";
 import Fretboard from "@/components/Fretboard";
 
@@ -35,10 +34,10 @@ export default function Home() {
   const groupId = mode === "triad" ? triadGroupId : drop2GroupId;
   const group = groups.find((g) => g.id === groupId) ?? groups[0];
 
-  const forms = useMemo(() => {
-    const inversions = computeInversions(quality, rootNote, group);
-    return visibleForms(inversions, 15);
-  }, [quality, rootNote, group]);
+  const forms = useMemo(
+    () => computeInversions(quality, rootNote, group),
+    [quality, rootNote, group],
+  );
 
   const chordSymbol = `${rootNote}${QUALITY_SUFFIX[quality]}`;
   const qualities: ChordQuality[] =
